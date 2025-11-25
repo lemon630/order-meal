@@ -9,7 +9,7 @@ from PIL import Image
 from datetime import datetime
 
 # ==========================================
-# 1. 数据库与核心逻辑
+# 1. 后端逻辑 (保持稳定)
 # ==========================================
 DB_FILE = "restaurant.db"
 
@@ -17,28 +17,30 @@ DB_FILE = "restaurant.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # 尝试增加 description 字段 (兼容旧版本)
     try:
         c.execute("ALTER TABLE menu ADD COLUMN description TEXT")
     except:
         pass
-
     c.execute('''CREATE TABLE IF NOT EXISTS menu
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   name TEXT, price REAL, category TEXT, image TEXT, description TEXT)''')
-
     c.execute('''CREATE TABLE IF NOT EXISTS orders
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   table_num INTEGER, items_json TEXT, total_price REAL, status TEXT, timestamp TEXT)''')
-
-    # 初始化数据
+    # 初始化默认数据
     c.execute('SELECT count(*) FROM menu')
     if c.fetchone()[0] == 0:
         default_menu = [
-            ("熔岩芝士牛肉堡", 88, "主菜", "https://images.unsplash.com/photo-1571062635316-2485521e14af?w=800",
-             "精选澳洲谷饲牛肉，搭配浓郁切达芝士。"),
-            ("夏日深蓝气泡水", 32, "饮品", "https://images.unsplash.com/photo-1575822369671-b0e633d71958?w=800",
-             "清爽柠檬汁搭配蓝柑糖浆。"),
+            ("经典牛肉汉堡", 45, "汉堡", "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=600",
+             "澳洲安格斯牛肉，搭配秘制酱料。"),
+            ("意式腊肠披萨", 88, "披萨", "https://images.unsplash.com/photo-1628840042765-356cda07504e?w=600",
+             "传统薄底，满满的芝士与腊肠。"),
+            ("日式三文鱼寿司", 32, "寿司", "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=600",
+             "新鲜深海三文鱼，口感软糯。"),
+            ("香脆炸薯条", 22, "小吃", "https://images.unsplash.com/photo-1630384060421-cb20d0e0649d?w=600",
+             "金黄酥脆，搭配番茄酱。"),
+            ("草莓奶油蛋糕", 35, "甜点", "https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=600",
+             "甜蜜草莓，入口即化。"),
         ]
         c.executemany('INSERT INTO menu (name, price, category, image, description) VALUES (?,?,?,?,?)', default_menu)
         conn.commit()
@@ -97,31 +99,17 @@ def delete_dish_from_db(dish_id):
     conn.close()
 
 
-# --- 图片处理工具函数 ---
 def process_uploaded_image(uploaded_file, target_width=600):
-    """
-    读取上传的图片，调整大小，并转换为Base64字符串用于存储
-    target_width: 目标宽度，默认600像素，防止数据库过大
-    """
     try:
         image = Image.open(uploaded_file)
-
-        # 计算新高度，保持比例
         w_percent = (target_width / float(image.size[0]))
         h_size = int((float(image.size[1]) * float(w_percent)))
-
-        # 调整大小
         image = image.resize((target_width, h_size), Image.Resampling.LANCZOS)
-
-        # 转换为字节流
         buffered = io.BytesIO()
-        # 统一转为 PNG 格式保存
         image.save(buffered, format="PNG")
-
-        # 转换为 Base64 字符串
         img_str = base64.b64encode(buffered.getvalue()).decode()
         return f"data:image/png;base64,{img_str}"
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -130,314 +118,387 @@ init_db()
 # ==========================================
 # 2. 状态管理
 # ==========================================
-if 'page' not in st.session_state:
-    st.session_state.page = 'home'
-if 'selected_dish' not in st.session_state:
-    st.session_state.selected_dish = None
-if 'cart' not in st.session_state:
-    st.session_state.cart = {}
-if 'table_num' not in st.session_state:
-    st.session_state.table_num = 1
-if 'current_category' not in st.session_state:
-    st.session_state.current_category = '全部'
+if 'cart' not in st.session_state: st.session_state.cart = {}
+if 'table_num' not in st.session_state: st.session_state.table_num = 1
+if 'current_category' not in st.session_state: st.session_state.current_category = '全部'
+if 'page' not in st.session_state: st.session_state.page = 'dashboard'  # dashboard, admin
 
 
-def go_to(page_name):
-    st.session_state.page = page_name
-    st.rerun()
+def add_to_cart(item_id):
+    if item_id in st.session_state.cart:
+        st.session_state.cart[item_id] += 1
+    else:
+        st.session_state.cart[item_id] = 1
+    st.toast("✅ 已加入购物车")
 
 
-def view_dish(dish_id):
-    st.session_state.selected_dish = dish_id
-    st.session_state.page = 'detail'
-    st.rerun()
-
-
-def filter_by_category(category_name):
-    st.session_state.current_category = category_name
-    st.session_state.page = 'home'
+def remove_from_cart(item_id):
+    if item_id in st.session_state.cart:
+        if st.session_state.cart[item_id] > 1:
+            st.session_state.cart[item_id] -= 1
+        else:
+            del st.session_state.cart[item_id]
     st.rerun()
 
 
 # ==========================================
-# 3. UI 样式
+# 3. 🎨 CSS 深度定制 (复刻设计图)
 # ==========================================
 
-st.set_page_config(page_title="餐厅在线点餐系统", layout="wide", page_icon="🥗")
+st.set_page_config(page_title="Gourmet OS", layout="wide", page_icon="🔥")
 
 st.markdown("""
 <style>
-    .stApp { background-color: #FFFFFF; }
-    .main-title { color: #2E7D32; font-size: 32px; font-weight: bold; margin-bottom: 20px; }
-
-    /* 导航按钮 */
-    .nav-btn button {
-        background-color: #26C6DA; 
-        color: white; border: none; border-radius: 5px; font-weight: bold;
-        padding: 8px 15px; margin: 0 5px 10px 0;
-    }
-    .nav-btn button:hover { background-color: #00ACC1; }
-
-    .stTextInput input { border: 1px solid #ddd; border-radius: 0px; }
-
-    /* 分类筛选按钮 */
-    .category-btn {
-        background-color: #4CAF50; color: white; padding: 10px 15px;
-        border-radius: 8px; text-align: center; font-weight: bold;
+    /* 1. 核心配色: 深空灰黑背景 */
+    .stApp {
+        background-color: #1F1D2B;
     }
 
-    /* 菜品展示 */
+    /* 2. 侧边栏配色 */
+    [data-testid="stSidebar"] {
+        background-color: #1F1D2B;
+        border-right: 1px solid #252836;
+    }
+
+    /* 3. 卡片样式 (拟态风格) */
     div[data-testid="stVerticalBlockBorderWrapper"] {
-        border: 1px solid #eee; border-radius: 8px; padding: 10px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        background-color: #252836;
+        border: 1px solid #2D303E;
+        border-radius: 16px;
+        padding: 15px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
     }
-    .dish-name { font-size: 16px; font-weight: 500; color: #333; margin-top: 5px; }
-    .dish-price { color: #D32F2F; font-weight: bold; font-size: 18px; }
-    .detail-price-val { color: #D32F2F; font-size: 24px; font-weight: bold; }
 
-    div.stButton > button { background-color: #26C6DA; color: white; border: none; border-radius: 5px; }
-    div.stButton > button:hover { background-color: #00ACC1; }
-    [data-testid="stSidebar"] { display: none; }
+    /* 4. 字体颜色 */
+    h1, h2, h3, h4, p, span, div, label {
+        color: #FFFFFF !important;
+        font-family: 'Inter', sans-serif;
+    }
+    .secondary-text {
+        color: #ABBBC2 !important;
+        font-size: 14px;
+    }
+
+    /* 5. 按钮 - 活力橙 */
+    div.stButton > button {
+        background-color: #EA7C69;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        box-shadow: 0 4px 10px rgba(234, 124, 105, 0.3);
+        transition: all 0.3s;
+    }
+    div.stButton > button:hover {
+        background-color: #FF8E7A;
+        transform: translateY(-2px);
+    }
+
+    /* 6. 搜索框 & 输入框 */
+    .stTextInput input, .stSelectbox div[data-baseweb="select"] > div {
+        background-color: #2D303E !important;
+        color: white !important;
+        border: 1px solid #393C49 !important;
+        border-radius: 8px;
+    }
+
+    /* 7. 分类按钮 (自定义胶囊) */
+    .category-btn {
+        display: inline-block;
+        background-color: #252836;
+        color: #EA7C69;
+        padding: 8px 16px;
+        border-radius: 20px;
+        margin-right: 10px;
+        border: 1px solid #393C49;
+        cursor: pointer;
+        text-align: center;
+        transition: 0.3s;
+    }
+    .category-btn:hover {
+        background-color: #EA7C69;
+        color: white;
+    }
+    .category-active {
+        background-color: #EA7C69;
+        color: white;
+    }
+
+    /* 8. 价格高亮 */
+    .price-tag {
+        color: #EA7C69 !important;
+        font-weight: bold;
+        font-size: 18px;
+    }
+
+    /* 9. 滚动条美化 */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: #1F1D2B; 
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #393C49; 
+        border-radius: 4px;
+    }
+
+    /* 隐藏顶部 padding */
+    .block-container {
+        padding-top: 2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-
 # ==========================================
-# 4. 页面组件
+# 4. 界面布局逻辑
 # ==========================================
 
-def render_navbar():
-    st.markdown("<div class='main-title'>餐厅在线点餐系统</div>", unsafe_allow_html=True)
-    nav_items = [("首页", "home"), ("我的餐车", "cart"), ("订单信息", "login")]
-    with st.container():
-        st.markdown("<div class='nav-btn'>", unsafe_allow_html=True)
-        cols = st.columns(len(nav_items))
-        for i, (label, target) in enumerate(nav_items):
-            with cols[i]:
-                if st.button(label, key=f"nav_{i}", use_container_width=True):
-                    st.session_state.page = target
-                    st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-render_navbar()
-st.markdown("---")
-
-# --- 首页 ---
-if st.session_state.page == 'home':
-    sc1, sc2 = st.columns([4, 1])
-    with sc1:
-        search_term = st.text_input("输入菜品名称...", key="search_input", label_visibility="collapsed")
-    with sc2:
-        if st.button("🔍 搜索", type="primary", use_container_width=True):
-            st.rerun()
-
-    st.markdown("### 🌿 经典菜品类名")
-    menu_df = get_menu_data()
-    categories = ["全部"] + list(menu_df['category'].unique())
-    cat_cols = st.columns(len(categories))
-    for i, cat in enumerate(categories):
-        with cat_cols[i]:
-            if st.button(cat, key=f"cat_{cat}", use_container_width=True):
-                filter_by_category(cat)
-
+# --- A. 左侧侧边栏 (导航) ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3448/3448636.png", width=60)  # Logo模拟
+    st.markdown("### **Gourmet**")
     st.markdown("<br>", unsafe_allow_html=True)
 
-    display_df = menu_df.copy()
-    if st.session_state.current_category != '全部':
-        display_df = display_df[display_df['category'] == st.session_state.current_category]
-    if search_term:
-        display_df = display_df[display_df['name'].str.contains(search_term, case=False)]
-        st.markdown(f"#### 🔍 搜索结果: {search_term}")
-    else:
-        st.markdown(f"#### 🔥 推荐菜品 ({st.session_state.current_category})")
+    if st.button("🏠 首页大厅", use_container_width=True):
+        st.session_state.page = 'dashboard'
+        st.rerun()
+    if st.button("⚙️ 后台管理", use_container_width=True):
+        st.session_state.page = 'admin'
+        st.rerun()
 
-    dish_cols = st.columns(5)
-    if display_df.empty:
-        st.info("暂无该分类菜品")
-
-    for index, row in display_df.iterrows():
-        with dish_cols[index % 5]:
-            with st.container(border=True):
-                try:
-                    st.image(row['image'], use_container_width=True)
-                except:
-                    st.image("https://via.placeholder.com/200", use_container_width=True)
-
-                st.markdown(f"<div class='dish-name'>{row['name']}</div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='dish-price'>¥ {int(row['price'])}</div>", unsafe_allow_html=True)
-                if st.button("查看详情", key=f"view_{row['id']}", use_container_width=True):
-                    view_dish(row['id'])
-
-# --- 详情页 ---
-elif st.session_state.page == 'detail':
-    if st.session_state.selected_dish is None:
-        go_to('home')
-    menu_df = get_menu_data()
-    dish = menu_df[menu_df['id'] == st.session_state.selected_dish].iloc[0]
-
-    if st.button("⬅ 返回首页"):
-        go_to('home')
     st.markdown("---")
+    st.info("🔥 24小时营业中")
 
-    d_col1, d_col2 = st.columns([1, 1.5])
-    with d_col1:
-        try:
-            st.image(dish['image'], use_container_width=True)
-        except:
-            st.image("https://via.placeholder.com/400", use_container_width=True)
-    with d_col2:
-        st.markdown(f"## {dish['name']}")
-        desc_text = dish['description'] if dish['description'] else "美味推荐。"
-        st.markdown(f"<span style='color:#D32F2F; font-size: 14px;'>描述：{desc_text}</span>", unsafe_allow_html=True)
-        st.markdown(f"价格：<span class='detail-price-val'>¥ {int(dish['price'])}</span>", unsafe_allow_html=True)
-        st.markdown(f"促销：<span style='color:red'>9 折</span>", unsafe_allow_html=True)
+# --- B. 主内容区域 (Dashboard) ---
+if st.session_state.page == 'dashboard':
 
-        c_q1, c_q2 = st.columns([1, 3])
-        with c_q1:
-            qty = st.number_input("数量", min_value=1, value=1, label_visibility="collapsed")
+    # 使用列布局：左边是菜单(3份宽)，右边是购物车(1.2份宽)
+    col_menu, col_spacer, col_cart = st.columns([3, 0.1, 1.3])
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("加入餐车", type="primary"):
-            if dish['id'] in st.session_state.cart:
-                st.session_state.cart[dish['id']] += qty
-            else:
-                st.session_state.cart[dish['id']] = qty
-            st.toast(f"已加入 {qty} 份 {dish['name']}")
+    # === 左侧：菜单区 ===
+    with col_menu:
+        # 1. 顶部 Header
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            st.markdown("## **欢迎回来, 请点餐 👋**")
+            st.caption(f"📅 {datetime.now().strftime('%Y年%m月%d日')} | 发现今天的美味")
+        with c2:
+            search = st.text_input("🔍 搜索...", placeholder="想吃点什么?", label_visibility="collapsed")
 
-# --- 购物车 ---
-elif st.session_state.page == 'cart':
-    st.markdown("### 🛒 我的餐车")
-    if not st.session_state.cart:
-        st.info("购物车是空的")
-        if st.button("去点餐"):
-            go_to('home')
-    else:
+        # 2. 分类筛选
         menu_df = get_menu_data()
-        total_price = 0
-        cart_details = []
-        for item_id, qty in st.session_state.cart.items():
-            item_row = menu_df[menu_df['id'] == item_id]
-            if not item_row.empty:
-                item = item_row.iloc[0]
-                subtotal = item['price'] * qty
-                total_price += subtotal
-                cart_details.append({"name": item['name'], "price": item['price'], "qty": qty, "subtotal": subtotal})
-                with st.container(border=True):
-                    cc1, cc2, cc3, cc4 = st.columns([3, 1, 1, 1])
-                    cc1.markdown(f"**{item['name']}**")
-                    cc2.markdown(f"¥{item['price']}")
-                    cc3.markdown(f"x {qty}")
-                    if cc4.button("删除", key=f"del_cart_{item_id}"):
-                        del st.session_state.cart[item_id]
-                        st.rerun()
-        st.divider()
-        st.markdown(f"### 总计: <span style='color:red'>¥{total_price}</span>", unsafe_allow_html=True)
+        categories = ["全部"] + list(menu_df['category'].unique())
 
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            st.session_state.table_num = st.selectbox("选择桌号", range(1, 21), key="cart_table")
-        with col_b2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🚀 确认下单", type="primary", use_container_width=True):
-                add_order_to_db(st.session_state.table_num, cart_details, total_price)
-                st.session_state.cart = {}
-                st.balloons()
-                st.success("下单成功！")
-                time.sleep(2)
-                go_to('home')
-
-# --- 登录与后台 ---
-elif st.session_state.page == 'login':
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        st.markdown("### 🔐 管理员登录")
-        pwd = st.text_input("请输入密码", type="password")
-        if st.button("登录"):
-            if pwd == "123456":
-                go_to('admin')
-            else:
-                st.error("密码错误")
-        if st.button("返回首页"):
-            go_to('home')
-
-elif st.session_state.page == 'admin':
-    st.markdown("### 👨‍💻 订单管理系统")
-    if st.button("⬅ 退出登录"):
-        go_to('home')
-
-    tab1, tab2 = st.tabs(["订单处理", "菜品管理"])
-
-    with tab1:
-        if st.button("刷新订单"):
-            st.rerun()
-        orders = get_orders_data()
-        for order in orders:
-            oid, otable, ojson, ototal, ostatus, otime = order
-            with st.expander(f"[{ostatus}] 桌号 {otable} - ¥{ototal} ({otime})"):
-                st.table(pd.DataFrame(json.loads(ojson)))
-                if "待" in ostatus:
-                    if st.button("完成订单", key=f"finish_{oid}"):
-                        update_order_status(oid, "已完成")
-                        st.rerun()
-
-    with tab2:
-        st.write("#### 添加新菜品")
-        with st.form("add_dish_form"):
-            n = st.text_input("名称")
-            p = st.number_input("价格", min_value=1)
-            c = st.text_input("分类 (如: 川菜, 饮品)")
-            d = st.text_input("描述")
-
-            # --- 图片上传区域 ---
-            st.markdown("---")
-            st.write("🖼️ **图片设置** (二选一)")
-            img_mode = st.radio("选择图片来源", ["使用网络链接 (URL)", "上传本地图片"], horizontal=True)
-
-            final_img_str = ""
-
-            if img_mode == "使用网络链接 (URL)":
-                img_url = st.text_input("输入图片链接")
-                if img_url:
-                    final_img_str = img_url
-                    st.image(img_url, width=200, caption="预览")
-            else:
-                uploaded_file = st.file_uploader("选择本地图片 (jpg/png)", type=['jpg', 'png', 'jpeg'])
-                # 添加调整大小的滑块
-                img_width = st.slider("调整图片宽度 (像素) - 防止数据库过大", 200, 1000, 600)
-
-                if uploaded_file is not None:
-                    # 处理图片
-                    processed_img = process_uploaded_image(uploaded_file, img_width)
-                    if processed_img:
-                        final_img_str = processed_img
-                        st.success(f"图片处理成功！宽度已调整为 {img_width}px")
-                        st.image(final_img_str, caption="预览 (已压缩)", width=300)
-                    else:
-                        st.error("图片处理失败，请重试")
-
-            st.markdown("---")
-
-            if st.form_submit_button("确认添加菜品"):
-                if not n:
-                    st.error("请输入菜名")
-                elif not final_img_str:
-                    st.warning("请设置一张图片")
-                else:
-                    add_dish_to_db(n, p, c, final_img_str, d)
-                    st.success(f"✅ 成功添加: {n}")
-                    time.sleep(1)
+        # 模拟水平滚动分类栏
+        st.markdown("<br>", unsafe_allow_html=True)
+        cols_cat = st.columns(len(categories))
+        for i, cat in enumerate(categories):
+            with cols_cat[i]:
+                # 简单的逻辑：点击按钮刷新页面并设置分类
+                # 这里为了 UI 美观，用 Streamlit 原生按钮模拟
+                if st.button(cat, key=f"cat_{i}", use_container_width=True):
+                    st.session_state.current_category = cat
                     st.rerun()
 
         st.markdown("---")
-        st.write("现有菜品")
-        current_menu = get_menu_data()
-        st.dataframe(current_menu[['id', 'name', 'price', 'category']], hide_index=True)
 
-        del_id = st.number_input("输入要删除的ID", min_value=0)
-        if st.button("删除该ID菜品"):
-            delete_dish_from_db(del_id)
-            st.rerun()
+        # 3. 菜品网格 (重点)
+        st.markdown(
+            f"### **{'🔥 热门推荐' if st.session_state.current_category == '全部' else st.session_state.current_category}**")
+
+        # 筛选数据
+        display_df = menu_df.copy()
+        if st.session_state.current_category != '全部':
+            display_df = display_df[display_df['category'] == st.session_state.current_category]
+        if search:
+            display_df = display_df[display_df['name'].str.contains(search, case=False)]
+
+        # 网格渲染 (每行3个，为了保持卡片美观)
+        dish_cols = st.columns(3)
+        for index, row in display_df.iterrows():
+            with dish_cols[index % 3]:
+                # 卡片容器
+                with st.container(border=True):
+                    # 图片居中
+                    try:
+                        st.image(row['image'], use_container_width=True)
+                    except:
+                        st.image("https://via.placeholder.com/200", use_container_width=True)
+
+                    st.markdown(f"**{row['name']}**")
+                    st.markdown(f"<span class='secondary-text'>{row['category']}</span>", unsafe_allow_html=True)
+
+                    c_price, c_add = st.columns([1, 1])
+                    with c_price:
+                        st.markdown(f"<span class='price-tag'>¥{int(row['price'])}</span>", unsafe_allow_html=True)
+                    with c_add:
+                        if st.button("➕", key=f"add_{row['id']}"):
+                            add_to_cart(row['id'])
+
+    # === 右侧：购物车区 (固定展示) ===
+    with col_cart:
+        # 模拟深色面板
+        with st.container(border=True):
+            st.markdown("### **🛒 订单详情**")
+            st.caption(f"订单号 #{int(time.time()) % 10000}")
+
+            # 配送/堂食切换 (视觉效果)
+            st.radio("用餐方式", ["堂食 Dine In", "外带 To Go"], horizontal=True, label_visibility="collapsed")
+
+            st.markdown("---")
+
+            # 桌号选择
+            st.markdown("**📍 选择桌号**")
+            st.session_state.table_num = st.selectbox("", range(1, 21), label_visibility="collapsed")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # 购物车列表
+            if not st.session_state.cart:
+                st.info("购物车是空的")
+                st.image("https://cdn-icons-png.flaticon.com/512/2038/2038854.png", width=100)
+            else:
+                total_price = 0
+                cart_items_for_db = []
+
+                # 限制高度，防止列表过长
+                with st.container(height=400):
+                    for item_id, qty in st.session_state.cart.items():
+                        item = menu_df[menu_df['id'] == item_id].iloc[0]
+                        subtotal = item['price'] * qty
+                        total_price += subtotal
+                        cart_items_for_db.append({"name": item['name'], "price": item['price'], "qty": qty})
+
+                        # 单行购物车项设计
+                        c1, c2, c3 = st.columns([2, 1, 1])
+                        with c1:
+                            st.image(item['image'], width=40)
+                            st.write(f"{item['name']}")
+                            st.caption(f"¥{item['price']}")
+                        with c2:
+                            st.write(f"x {qty}")
+                        with c3:
+                            if st.button("🗑️", key=f"del_{item_id}"):
+                                remove_from_cart(item_id)
+                        st.markdown("---")
+
+                # 底部结算区
+                st.markdown("### **总计摘要**")
+
+                sc1, sc2 = st.columns([2, 1])
+                sc1.write("商品总额")
+                sc2.write(f"¥{total_price}")
+
+                sc1.write("服务费")
+                sc2.write("¥0")
+
+                st.markdown("---")
+
+                ft1, ft2 = st.columns([1, 1])
+                ft1.markdown("#### **总计**")
+                ft2.markdown(f"<span class='price-tag'>¥{total_price}</span>", unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                if st.button("🚀 确认下单 Payment", type="primary", use_container_width=True):
+                    add_order_to_db(st.session_state.table_num, cart_items_for_db, total_price)
+                    st.session_state.cart = {}  # 清空
+                    st.balloons()
+                    st.success("下单成功！厨师已收到。")
+                    time.sleep(2)
+                    st.rerun()
+
+# ==========================================
+# 5. 后台管理页面 (Admin)
+# ==========================================
+elif st.session_state.page == 'admin':
+    st.markdown("## **⚙️ 后台管理控制台**")
+
+    # 简单的密码保护
+    pwd = st.sidebar.text_input("管理员密码", type="password")
+    if pwd == "123456":
+        tab1, tab2 = st.tabs(["📝 实时订单", "🥘 菜品 & 图片"])
+
+        with tab1:
+            if st.button("🔄 刷新订单列表"): st.rerun()
+            orders = get_orders_data()
+            if not orders: st.info("暂无订单")
+
+            for order in orders:
+                oid, otable, ojson, ototal, ostatus, otime = order
+
+                # 订单卡片样式
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([4, 2, 2])
+                    with c1:
+                        st.markdown(f"**订单 #{oid}** | 桌号: {otable}")
+                        st.caption(f"时间: {otime}")
+                        # 展开详情
+                        with st.expander("查看菜品详情"):
+                            st.table(pd.DataFrame(json.loads(ojson)))
+                    with c2:
+                        st.markdown(f"#### ¥{ototal}")
+                    with c3:
+                        if "待" in ostatus:
+                            st.warning(ostatus)
+                            if st.button("✅ 完成", key=f"fin_{oid}"):
+                                update_order_status(oid, "已完成")
+                                st.rerun()
+                        else:
+                            st.success(ostatus)
+
+        with tab2:
+            st.markdown("### **添加新菜品**")
+            with st.container(border=True):
+                with st.form("add_dish_form"):
+                    c1, c2 = st.columns(2)
+                    n = c1.text_input("菜品名称")
+                    p = c2.number_input("价格", min_value=1)
+                    cat = c1.text_input("分类 (如: 汉堡, 披萨)")
+                    desc = c2.text_input("描述")
+
+                    st.markdown("**图片上传 (支持本地)**")
+                    img_src = st.radio("来源", ["本地上传", "网络链接"], horizontal=True)
+                    final_img = ""
+
+                    if img_src == "本地上传":
+                        up_file = st.file_uploader("选择图片", type=['png', 'jpg', 'jpeg'])
+                        if up_file:
+                            final_img = process_uploaded_image(up_file)
+                            if final_img: st.image(final_img, width=100)
+                    else:
+                        url = st.text_input("图片 URL")
+                        if url:
+                            final_img = url
+                            st.image(url, width=100)
+
+                    if st.form_submit_button("发布菜品"):
+                        if n and final_img:
+                            add_dish_to_db(n, p, cat, final_img, desc)
+                            st.success("发布成功！")
+                            st.rerun()
+                        else:
+                            st.error("请补全信息")
+
+            st.markdown("---")
+            st.markdown("### **菜单列表**")
+            df_menu = get_menu_data()
+            for i, row in df_menu.iterrows():
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([1, 4, 1])
+                    c1.image(row['image'], width=50)
+                    c2.markdown(f"**{row['name']}** - ¥{row['price']}")
+                    if c3.button("删除", key=f"del_d_{row['id']}"):
+                        delete_dish_from_db(row['id'])
+                        st.rerun()
+
+    else:
+        st.warning("🔒 请在左侧输入密码 (123456)")
+
+
+
 
 
 
